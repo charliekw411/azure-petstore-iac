@@ -1,0 +1,111 @@
+trigger:
+  branches:
+    include:
+      - main # trigger pipeline on pushes to main branch
+
+pool:
+  name: Azure Pipelines 
+
+# Reference the pipeline-templates repo
+resources:
+  repositories:
+    - repository: pipeline-templates
+      type: git
+      name: 'Azure Pet Store/pipeline-templates'
+      ref: 'refs/heads/main'  # Branch of the templates repo you want to use
+
+stages:
+  - stage: BuildAndPush
+    displayName: 'Build and Push Docker Images to ACR'
+    jobs:
+      - job: start_and_build
+        displayName: 'Start Docker Daemon and Build Image'
+        steps:
+          # Start the Docker daemon in the background
+          - script: |
+              sudo dockerd > /dev/null 2>&1 &
+              sleep 10
+            displayName: 'Start Docker Daemon'
+
+          # install docker compose
+          - script: |
+              sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+              docker-compose --version
+            displayName: 'Install Docker Compose'
+
+          # Log in to Azure Container Registry
+          - task: AzureCLI@2
+            displayName: 'Login to Azure Container Registry'
+            inputs:
+              azureSubscription: 'azure-petstore-service-connection'  # My azurerm service connection
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az acr login --name acrpetstoredev01 
+
+          # Build and Push Docker Image with and BuildId tag
+          - script: |
+              docker build -t acrpetstoredev01.azurecr.io/petstoreapp:latest -t acrpetstoredev01.azurecr.io/petstoreapp:$(Build.BuildId) -f $(Build.SourcesDirectory)/app/petstoreapp/Dockerfile $(Build.SourcesDirectory)/app/petstoreapp
+              docker push acrpetstoredev01.azurecr.io/petstoreapp:latest
+              docker push acrpetstoredev01.azurecr.io/petstoreapp:$(Build.BuildId)
+
+              docker build -t acrpetstoredev01.azurecr.io/petstoreorderservice:latest -t acrpetstoredev01.azurecr.io/petstoreorderservice:$(Build.BuildId) -f $(Build.SourcesDirectory)/app/petstoreorderservice/Dockerfile $(Build.SourcesDirectory)/app/petstoreorderservice
+              docker push acrpetstoredev01.azurecr.io/petstoreorderservice:latest
+              docker push acrpetstoredev01.azurecr.io/petstoreorderservice:$(Build.BuildId)
+              
+              docker build -t acrpetstoredev01.azurecr.io/petstorepetservice:latest -t acrpetstoredev01.azurecr.io/petstorepetservice:$(Build.BuildId) -f $(Build.SourcesDirectory)/app/petstorepetservice/Dockerfile $(Build.SourcesDirectory)/app/petstorepetservice
+              docker push acrpetstoredev01.azurecr.io/petstorepetservice:latest
+              docker push acrpetstoredev01.azurecr.io/petstorepetservice:$(Build.BuildId)
+              
+              docker build -t acrpetstoredev01.azurecr.io/petstoreproductservice:latest -t acrpetstoredev01.azurecr.io/petstoreproductservice:$(Build.BuildId) -f $(Build.SourcesDirectory)/app/petstoreproductservice/Dockerfile $(Build.SourcesDirectory)/app/petstoreproductservice
+              docker push acrpetstoredev01.azurecr.io/petstoreproductservice:latest
+              docker push acrpetstoredev01.azurecr.io/petstoreproductservice:$(Build.BuildId)
+            displayName: 'Build and Push Docker Image'
+
+  - stage: DeployCompose
+    displayName: 'Deploy Multi-Container App using Docker Compose'
+    dependsOn: BuildAndPush
+    jobs:
+      - job: deploy
+        displayName: 'Deploy Multi-Container app using Docker Compose'
+        steps:
+          # Start Docker daemon for deployment
+          - script: |
+              sudo dockerd > /dev/null 2>&1 &
+              sleep 10
+            displayName: 'Start Docker Daemon for Compose'
+          # install docker compose again? TODO: ensure docker compose installation persists across pipeline stages
+          - script: |
+              sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+              docker-compose --version
+            displayName: 'Install Docker Compose in Deploy Job'
+
+          # Log in to Azure Container Registry
+          - task: AzureCLI@2
+            displayName: 'Login to Azure Container Registry'
+            inputs:
+              azureSubscription: 'azure-petstore-service-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az acr login --name acrpetstoredev01 
+          
+          # copy the docker-compose.yaml to /home/site/wwwroot in the app service
+          # this task establishes an SSH connection to the App Service and copies the docker-compose.yaml file to the /home/site/wwwroot directory
+          - task: AzureCLI@2
+            displayName: 'Copy docker-compose.yaml to App Service'
+            inputs:
+              azureSubscription: 'azure-petstore-service-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az webapp create-remote-connection --subscription $(az account show --query id -o tsv) --resource-group {resource_group_name} --name {app_service_name} &
+                sleep 10
+                scp -o StrictHostKeyChecking=no $(Build.SourcesDirectory)/pipelines/docker-compose.yaml scm@{app_service_name}.scm.azurewebsites.net:/home/site/wwwroot/docker-compose.yaml
+                
+          # Deploy the multi-container app using Docker Compose
+          - script: |
+              docker-compose -f /home/site/wwwroot/docker-compose.yaml up -d
+            displayName: 'Deploy Docker Compose Application'

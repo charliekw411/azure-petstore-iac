@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  petstoreapp:
+    image: acrpetstoredev01.azurecr.io/petstoreapp:latest
+    container_name: petstoreapp
+    ports:
+      - "8080:8080"
+    environment:
+      - PETSTOREAPP_SERVER_PORT=8080
+      - PETSTOREPETSERVICE_URL=http://petstorepetservice:8081
+      - PETSTOREPRODUCTSERVICE_URL=http://petstoreproductservice:8082
+      - PETSTOREORDERSERVICE_URL=http://petstoreorderservice:8083
+
+  petstoreorderservice:
+    image: acrpetstoredev01.azurecr.io/petstoreorderservice:latest
+    container_name: petstoreorderservice
+    ports:
+      - "8083:8083"
+    environment:
+      - PETSTOREORDERSERVICE_SERVER_PORT=8083
+
+  petstorepetservice:
+    image: acrpetstoredev01.azurecr.io/petstorepetservice:latest
+    container_name: petstorepetservice
+    ports:
+      - "8081:8081"
+    environment:
+      - PETSTOREPETSERVICE_SERVER_PORT=8081
+
+  petstoreproductservice:
+    image: acrpetstoredev01.azurecr.io/petstoreproductservice:latest
+    container_name: petstoreproductservice
+    ports:
+      - "8082:8082"
+    environment:
+      - PETSTOREPRODUCTSERVICE_SERVER_PORT=8082
