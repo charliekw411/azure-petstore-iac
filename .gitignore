@@ -2,5 +2,6 @@ newres
 plan.out
 secrets.ps1
 .terraform
+.terraform.*
 .env
 azure.yaml
